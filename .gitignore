@@ -1,1 +1,14 @@
 test
+
+# Environment variables (never commit real secrets)
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
