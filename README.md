@@ -23,7 +23,7 @@ En modulos posteriores del master, este servicio evolucionara a una arquitectura
 
 1. Clonar el repositorio y entrar al directorio:
    ```bash
-   cd estimator
+   cd estimador-manual
    ```
 
 2. Copiar el archivo de variables de entorno y configurar las API keys:
@@ -32,12 +32,14 @@ En modulos posteriores del master, este servicio evolucionara a una arquitectura
    # Editar .env y poner tu API key real
    ```
 
-3. Construir y levantar el servicio:
+3. Construir y levantar los servicios (API + interfaz de chat en Streamlit):
    ```bash
    docker compose up --build
    ```
 
-4. El servicio estara disponible en `http://localhost:8000`
+4. Los servicios estaran disponibles en:
+   - API (FastAPI): `http://localhost:8000` (docs en `/docs`)
+   - Interfaz de chat (Streamlit): `http://localhost:8501`
 
 ## Alternativa: ejecucion local sin Docker
 
