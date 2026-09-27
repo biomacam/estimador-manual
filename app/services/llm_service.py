@@ -1,4 +1,7 @@
 import secrets
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass
 
 import structlog
 
@@ -12,6 +15,18 @@ MAX_TOKENS = 4000
 
 class LLMServiceError(Exception):
     """Raised when the LLM provider call fails."""
+
+
+@dataclass
+class StreamMetrics:
+    """Mutable holder filled in-place by stream_estimation() once the stream finishes."""
+
+    provider: str = ""
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    elapsed_seconds: float = 0.0
+    truncated: bool = False
 
 
 def build_system_prompt() -> str:
@@ -156,3 +171,104 @@ def generate_estimation(transcription: str) -> dict:
     elif settings.LLM_PROVIDER == "anthropic":
         return _call_anthropic(system_prompt, delimited_transcription, settings.LLM_MODEL)
     raise LLMServiceError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
+
+
+def _stream_openai(
+    system_prompt: str, transcription: str, model: str, metrics: StreamMetrics
+) -> Iterator[str]:
+    from openai import APIError, OpenAI
+
+    settings = get_settings()
+    client = OpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        timeout=settings.LLM_TIMEOUT_SECONDS,
+        max_retries=settings.LLM_MAX_RETRIES,
+    )
+    start = time.monotonic()
+    finish_reason = None
+    try:
+        stream = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": transcription},
+            ],
+            max_tokens=MAX_TOKENS,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        for chunk in stream:
+            if chunk.choices:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+                if chunk.choices[0].finish_reason:
+                    finish_reason = chunk.choices[0].finish_reason
+            if chunk.usage:
+                metrics.input_tokens = chunk.usage.prompt_tokens
+                metrics.output_tokens = chunk.usage.completion_tokens
+    except APIError as exc:
+        log.error("llm_provider_failed", provider="openai", error=str(exc))
+        raise LLMServiceError("No se pudo generar la estimación.") from exc
+    metrics.elapsed_seconds = time.monotonic() - start
+    metrics.truncated = finish_reason == "length"
+    log.info(
+        "llm_stream_completed",
+        provider="openai",
+        input_tokens=metrics.input_tokens,
+        output_tokens=metrics.output_tokens,
+        elapsed_seconds=metrics.elapsed_seconds,
+    )
+
+
+def _stream_anthropic(
+    system_prompt: str, transcription: str, model: str, metrics: StreamMetrics
+) -> Iterator[str]:
+    from anthropic import APIError, Anthropic
+
+    settings = get_settings()
+    client = Anthropic(
+        api_key=settings.ANTHROPIC_API_KEY,
+        timeout=settings.LLM_TIMEOUT_SECONDS,
+        max_retries=settings.LLM_MAX_RETRIES,
+    )
+    start = time.monotonic()
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=MAX_TOKENS,
+            system=system_prompt,
+            messages=[{"role": "user", "content": transcription}],
+        ) as stream:
+            yield from stream.text_stream
+            final_message = stream.get_final_message()
+    except APIError as exc:
+        log.error("llm_provider_failed", provider="anthropic", error=str(exc))
+        raise LLMServiceError("No se pudo generar la estimación.") from exc
+    metrics.elapsed_seconds = time.monotonic() - start
+    metrics.input_tokens = final_message.usage.input_tokens
+    metrics.output_tokens = final_message.usage.output_tokens
+    metrics.truncated = final_message.stop_reason == "max_tokens"
+    log.info(
+        "llm_stream_completed",
+        provider="anthropic",
+        input_tokens=metrics.input_tokens,
+        output_tokens=metrics.output_tokens,
+        elapsed_seconds=metrics.elapsed_seconds,
+    )
+
+
+def stream_estimation(transcription: str, metrics: StreamMetrics) -> Iterator[str]:
+    """Yield the estimation text chunk by chunk, filling `metrics` with usage/timing once the stream ends."""
+    settings = get_settings()
+    system_prompt = build_system_prompt()
+    delimited_transcription = _delimit_transcription(transcription)
+    metrics.provider = settings.LLM_PROVIDER
+    metrics.model = settings.LLM_MODEL
+
+    if settings.LLM_PROVIDER == "openai":
+        yield from _stream_openai(system_prompt, delimited_transcription, settings.LLM_MODEL, metrics)
+    elif settings.LLM_PROVIDER == "anthropic":
+        yield from _stream_anthropic(system_prompt, delimited_transcription, settings.LLM_MODEL, metrics)
+    else:
+        raise LLMServiceError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
