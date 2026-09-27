@@ -3,7 +3,10 @@ from pydantic import BaseModel, Field
 
 class EstimationRequest(BaseModel):
     transcription: str = Field(
-        ..., description="Meeting transcription text to generate an estimation from"
+        ...,
+        min_length=50,
+        max_length=50_000,
+        description="Meeting transcription text to generate an estimation from",
     )
 
 

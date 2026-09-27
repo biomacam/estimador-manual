@@ -4,12 +4,19 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_MODELS: dict[str, str] = {
+	"openai": "gpt-4o-mini",
+	"anthropic": "claude-haiku-4-5",
+}
+
 
 class Settings(BaseSettings):
 	OPENAI_API_KEY: str | None = None
 	ANTHROPIC_API_KEY: str | None = None
 	LLM_PROVIDER: Literal["openai", "anthropic"] = "openai"
-	LLM_MODEL: str = "gpt-4o-mini"
+	LLM_MODEL: str | None = None
+	LLM_TIMEOUT_SECONDS: float = 30.0
+	LLM_MAX_RETRIES: int = 2
 	APP_ENV: str = "development"
 	LOG_LEVEL: str = "DEBUG"
 
@@ -18,6 +25,12 @@ class Settings(BaseSettings):
 		env_file_encoding="utf-8",
 		extra="ignore",
 	)
+
+	@model_validator(mode="after")
+	def resolve_model_for_provider(self) -> "Settings":
+		if not self.LLM_MODEL:
+			self.LLM_MODEL = DEFAULT_MODELS[self.LLM_PROVIDER]
+		return self
 
 	@model_validator(mode="after")
 	def validate_api_key_for_provider(self) -> "Settings":

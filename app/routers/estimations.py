@@ -9,10 +9,12 @@ log = structlog.get_logger()
 
 
 @router.post("/estimate", response_model=EstimationResponse)
-async def estimate(request: EstimationRequest) -> EstimationResponse:
+def estimate(request: EstimationRequest) -> EstimationResponse:
     try:
         result = generate_estimation(request.transcription)
     except LLMServiceError as exc:
         log.error("estimation_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500, detail="No se pudo generar la estimación."
+        ) from exc
     return EstimationResponse(**result)
